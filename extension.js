@@ -191,3 +191,187 @@ class TodoistProvider {
                     return;
                 }
 
+                // Saved filters already know their language. Manual queries, unfortunately, do not.
+                callback(null, {
+                    title: filter.name || 'Checklist',
+                    query: filter.query,
+                    openUri: `todoist://filter?id=${encodeURIComponent(filter.id)}`,
+                    language: normalizeLanguage(data.user?.lang || 'en'),
+                });
+            } catch (parseError) {
+                callback(parseError);
+            }
+        });
+    }
+
+    resolveProject(projectId, callback) {
+        this._get(`${API_BASE}/projects/${encodeURIComponent(projectId)}`, (error, status, body) => {
+            if (error || status < 200 || status >= 300) {
+                callback(error ?? new Error(`HTTP ${status}`));
+                return;
+            }
+
+            try {
+                const project = JSON.parse(body || '{}');
+                callback(null, {
+                    title: project.name || 'Checklist',
+                    projectId,
+                    openUri: `todoist://project?id=${encodeURIComponent(projectId)}`,
+                });
+            } catch (parseError) {
+                callback(parseError);
+            }
+        });
+    }
+
+    fetchProjectTasks(projectId, callback) {
+        const url = `${API_BASE}/tasks?project_id=${encodeURIComponent(projectId)}&limit=200`;
+        this._get(url, (error, status, body) => this._parseTaskResponse(error, status, body, callback));
+    }
+
+    fetchFilterTasks(query, language, callback) {
+        const queries = splitTopLevelQueries(query);
+        const tasks = new Map();
+        let hasMore = false;
+
+        const next = index => {
+            if (index >= queries.length) {
+                callback(null, [...tasks.values()], hasMore);
+                return;
+            }
+
+            let url = `${API_BASE}/tasks/filter?query=${encodeURIComponent(queries[index])}&limit=200`;
+            const queryLanguage = normalizeLanguage(language || this._language);
+            if (queryLanguage)
+                url += `&lang=${encodeURIComponent(queryLanguage)}`;
+
+            this._get(url, (error, status, body) => {
+                this._parseTaskResponse(error, status, body, (parseError, pageTasks, pageHasMore) => {
+                    if (parseError) {
+                        callback(parseError);
+                        return;
+                    }
+
+                    for (const task of pageTasks)
+                        tasks.set(String(task.id), task);
+                    hasMore ||= pageHasMore;
+                    next(index + 1);
+                });
+            });
+        };
+
+        next(0);
+    }
+
+    _parseTaskResponse(error, status, body, callback) {
+        if (error || status < 200 || status >= 300) {
+            let detail = '';
+            if (body) {
+                try {
+                    const payload = JSON.parse(body);
+                    detail = payload.error || payload.message || payload.detail || '';
+                } catch (_parseError) {
+                    detail = body.trim().slice(0, 180);
+                }
+            }
+            callback(error ?? new Error(`HTTP ${status}${detail ? `: ${detail}` : ''}`));
+            return;
+        }
+
+        try {
+            const data = JSON.parse(body || '{}');
+            const tasks = Array.isArray(data) ? data : (data.results ?? []);
+            callback(null, tasks, Boolean(data.next_cursor));
+        } catch (parseError) {
+            callback(parseError);
+        }
+    }
+
+    completeTask(taskId, callback) {
+        const message = Soup.Message.new(
+            'POST',
+            `${API_BASE}/tasks/${encodeURIComponent(taskId)}/close`
+        );
+        this._send(message, (error, status) => {
+            if (error || status < 200 || status >= 300)
+                callback(error ?? new Error(`HTTP ${status}`));
+            else
+                callback(null);
+        });
+    }
+}
+
+const ChecklistIndicator = GObject.registerClass(
+class ChecklistIndicator extends PanelMenu.Button {
+    _init(extension, settings, token) {
+        super._init(0.0, extension.metadata.name);
+
+        this._extension = extension;
+        this._settings = settings;
+        this._token = token;
+        this._session = new Soup.Session({timeout: 20});
+        this._cancellable = new Gio.Cancellable();
+        this._refreshSource = 0;
+        this._busy = false;
+        this._resolvedSource = null;
+
+        const box = new St.BoxLayout({style_class: 'panel-status-menu-box'});
+        this._icon = new St.Icon({
+            icon_name: 'view-list-symbolic',
+            style_class: 'system-status-icon',
+        });
+        this._countLabel = new St.Label({
+            text: '',
+            y_align: Clutter.ActorAlign.CENTER,
+            style_class: 'checklist-panel-count',
+        });
+        box.add_child(this._icon);
+        box.add_child(this._countLabel);
+        this.add_child(box);
+
+        this._applySpacing();
+        this._updateCount(0);
+
+        this.menu.connect('open-state-changed', (_menu, isOpen) => {
+            if (isOpen)
+                this.refresh();
+        });
+
+        this._renderMessage('Loading…');
+        this.refresh();
+        this._installTimer();
+    }
+
+    _applySpacing() {
+        const spacing = Math.min(32, this._settings.get_uint('spacing-px'));
+        const position = this._settings.get_string('panel-position');
+        if (position === 'before-clock' || position === 'center')
+            this.set_style(`margin-right: ${spacing}px;`);
+        else if (position === 'after-clock')
+            this.set_style(`margin-left: ${spacing}px;`);
+        else
+            this.set_style(`margin-left: ${Math.floor(spacing / 2)}px; margin-right: ${Math.ceil(spacing / 2)}px;`);
+    }
+
+    _installTimer() {
+        const seconds = Math.max(60, this._settings.get_uint('refresh-seconds'));
+        this._refreshSource = GLib.timeout_add_seconds(
+            GLib.PRIORITY_DEFAULT,
+            seconds,
+            () => {
+                this.refresh();
+                return GLib.SOURCE_CONTINUE;
+            }
+        );
+    }
+
+    _provider() {
+        return new TodoistProvider(
+            this._session,
+            this._cancellable,
+            this._token,
+            this._settings.get_string('filter-language')
+        );
+    }
+
+    _displayTitle(fallback = 'Checklist') {

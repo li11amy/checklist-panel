@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-License-Identifier: GPL-2.0-or-later -->
+<!-- Copyright (C) 2026 li11amy -->
+<schemalist>
+  <schema id="org.gnome.shell.extensions.checklist-panel" path="/org/gnome/shell/extensions/checklist-panel/">
+    <key name="source" type="s">
+      <default>''</default>
+      <summary>Task source</summary>
+      <description>A Todoist filter/project URL or a Todoist filter query.</description>
+    </key>
+    <key name="filter-language" type="s">
+      <default>'en'</default>
+      <summary>Filter language</summary>
+      <description>IETF language tag used to parse a manually entered Todoist filter query.</description>
+    </key>
+    <key name="menu-title" type="s">
+      <default>''</default>
+      <summary>Menu title</summary>
+      <description>Optional custom title. An empty value uses the saved filter or project name when available.</description>
+    </key>
+    <key name="panel-position" type="s">
+      <default>'before-clock'</default>
+      <summary>Panel position</summary>
+      <description>One of left, before-clock, after-clock, or right.</description>
+    </key>
+    <key name="show-count" type="b">
+      <default>false</default>
+      <summary>Show task count</summary>
+      <description>Whether to display the loaded task count beside the panel icon.</description>
+    </key>
+    <key name="spacing-px" type="u">
+      <default>8</default>
+      <summary>Panel spacing</summary>
+      <description>Extra spacing around the panel indicator in pixels.</description>
+    </key>
+    <key name="complete-on-click" type="b">
+      <default>true</default>
+      <summary>Complete on click</summary>
+      <description>Whether clicking a task completes it instead of opening it.</description>
+    </key>
+    <key name="max-menu-items" type="u">
+      <default>12</default>
+      <summary>Maximum menu tasks</summary>
+      <description>Maximum number of tasks shown in the popup menu before a More item is used.</description>
+    </key>
+    <key name="refresh-seconds" type="u">
+      <default>300</default>
+      <summary>Refresh interval</summary>
+      <description>Automatic refresh interval in seconds.</description>
+    </key>
+    <key name="token-version" type="u">
+      <default>0</default>
+      <summary>Token change counter</summary>
+      <description>Internal counter used to notify the shell when the stored API token changes.</description>
+    </key>
+  </schema>
+</schemalist>

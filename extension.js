@@ -375,3 +375,181 @@ class ChecklistIndicator extends PanelMenu.Button {
     }
 
     _displayTitle(fallback = 'Checklist') {
+        const customTitle = this._settings.get_string('menu-title').trim();
+        return customTitle || this._resolvedSource?.title || fallback;
+    }
+
+    _easterEggText() {
+        const key = this._settings.get_string('menu-title').trim().toLowerCase();
+        return EASTER_EGGS.get(key) ?? '';
+    }
+
+    _addEasterEgg() {
+        const text = this._easterEggText();
+        if (!text)
+            return;
+
+        const item = new PopupMenu.PopupMenuItem(text, {
+            reactive: false,
+            can_focus: false,
+        });
+        item.label.add_style_class_name('checklist-panel-easter-egg');
+        this.menu.addMenuItem(item);
+    }
+
+    _updateCount(count) {
+        const show = this._settings.get_boolean('show-count');
+        this._countLabel.visible = show;
+        this._countLabel.text = show ? String(count) : '';
+    }
+
+    _addFooter() {
+        this._addEasterEgg();
+        this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+
+        const refreshItem = new PopupMenu.PopupMenuItem('Refresh');
+        refreshItem.connect('activate', () => this.refresh());
+        this.menu.addMenuItem(refreshItem);
+
+        if (this._resolvedSource?.openUri || this._resolvedSource?.webUri) {
+            const openItem = new PopupMenu.PopupMenuItem('Open in Todoist');
+            openItem.connect('activate', () => this._openTodoist(
+                this._resolvedSource.openUri,
+                this._resolvedSource.webUri
+            ));
+            this.menu.addMenuItem(openItem);
+        }
+
+        const settingsItem = new PopupMenu.PopupMenuItem('Settings');
+        settingsItem.connect('activate', () => this._extension.openPreferences());
+        this.menu.addMenuItem(settingsItem);
+    }
+
+    _renderMessage(text) {
+        this.menu.removeAll();
+
+        const title = new PopupMenu.PopupMenuItem(this._displayTitle(), {
+            reactive: false,
+            can_focus: false,
+        });
+        title.label.add_style_class_name('checklist-panel-title');
+        this.menu.addMenuItem(title);
+        this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+        this.menu.addMenuItem(new PopupMenu.PopupMenuItem(text, {
+            reactive: false,
+            can_focus: false,
+        }));
+        this._addFooter();
+    }
+
+    _renderTasks(tasks, hasMore = false) {
+        this.menu.removeAll();
+        this._updateCount(tasks.length);
+
+        // Keep the footer reachable even for people with heroic task backlogs.
+        const maxItems = Math.max(5, Math.min(30, this._settings.get_uint('max-menu-items')));
+        const visibleTasks = tasks.slice(0, maxItems);
+        const hiddenCount = Math.max(0, tasks.length - visibleTasks.length);
+        const suffix = tasks.length > 0 ? ` · ${tasks.length}${hasMore ? '+' : ''}` : '';
+        const title = new PopupMenu.PopupMenuItem(`${this._displayTitle()}${suffix}`, {
+            reactive: false,
+            can_focus: false,
+        });
+        title.label.add_style_class_name('checklist-panel-title');
+        this.menu.addMenuItem(title);
+        this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+
+        if (visibleTasks.length === 0) {
+            this.menu.addMenuItem(new PopupMenu.PopupMenuItem('Nothing here. Suspiciously productive.', {
+                reactive: false,
+                can_focus: false,
+            }));
+        } else {
+            for (const task of visibleTasks) {
+                const item = new PopupMenu.PopupMenuItem(`☐  ${task.content}`);
+                item.connect('activate', () => this._activateTask(task));
+                this.menu.addMenuItem(item);
+            }
+
+            if (hiddenCount > 0 || hasMore) {
+                const moreText = hasMore
+                    ? 'More tasks…'
+                    : `${hiddenCount} more task${hiddenCount === 1 ? '' : 's'}…`;
+                const moreItem = new PopupMenu.PopupMenuItem(moreText);
+                moreItem.connect('activate', () => {
+                    this._openTodoist(
+                        this._resolvedSource?.openUri,
+                        this._resolvedSource?.webUri
+                    );
+                });
+                this.menu.addMenuItem(moreItem);
+            }
+        }
+
+        this._addFooter();
+    }
+
+    _activateTask(task) {
+        if (!this._settings.get_boolean('complete-on-click')) {
+            this._openTodoist(
+                `todoist://task?id=${encodeURIComponent(task.id)}`,
+                `https://app.todoist.com/app/task/${encodeURIComponent(task.id)}`
+            );
+            return;
+        }
+
+        if (this._busy)
+            return;
+
+        this._busy = true;
+        this._provider().completeTask(task.id, error => {
+            this._busy = false;
+            if (error) {
+                Main.notify(this._displayTitle(), `Todoist refused to tick off “${task.content}”.`);
+                return;
+            }
+            this.refresh();
+        });
+    }
+
+    _openTodoist(deepUri, webUri) {
+        // Prefer the desktop app when it registered Todoist's URL scheme; otherwise use the browser.
+        if (deepUri && Gio.AppInfo.get_default_for_uri_scheme('todoist')) {
+            try {
+                Gio.AppInfo.launch_default_for_uri(deepUri, null);
+                return;
+            } catch (error) {
+                console.error(`[Checklist Panel] Could not open Todoist app: ${error}`);
+            }
+        }
+
+        if (!webUri)
+            webUri = 'https://app.todoist.com/app';
+
+        try {
+            Gio.AppInfo.launch_default_for_uri(webUri, null);
+        } catch (error) {
+            console.error(`[Checklist Panel] Could not open Todoist in browser: ${error}`);
+        }
+    }
+
+    refresh() {
+        if (this._busy)
+            return;
+
+        if (!this._token) {
+            this._updateCount(0);
+            this._renderMessage('Add your API token in Settings.');
+            return;
+        }
+
+        const sourceText = this._settings.get_string('source');
+        const source = parseSource(sourceText);
+        if (source.kind === 'empty') {
+            this._updateCount(0);
+            this._renderMessage('Paste a filter/project link or enter a filter query in Settings.');
+            return;
+        }
+
+        if (source.kind === 'unsupported-url') {
+            this._updateCount(0);

@@ -151,3 +151,131 @@ export default class ChecklistPanelPreferences extends ExtensionPreferences {
                         'Checklist Panel — Todoist API token',
                         token,
                         null
+                    );
+                } else {
+                    Secret.password_clear_sync(secretSchema, SECRET_ATTRIBUTES, null);
+                }
+                storedToken = token;
+                settings.set_uint('token-version', settings.get_uint('token-version') + 1);
+                updateTokenButton();
+            } catch (error) {
+                saveTokenButton.label = 'Save failed';
+                saveTokenButton.sensitive = true;
+                console.error(`[Checklist Panel] Could not save API token: ${error}`);
+            }
+        });
+        tokenEntry.connect('changed', updateTokenButton);
+        tokenRow.add_suffix(tokenEntry);
+        tokenRow.add_suffix(saveTokenButton);
+        sourceGroup.add(tokenRow);
+        updateTokenButton();
+        addTextRow(
+            sourceGroup,
+            'Project / saved-filter link or filter query',
+            settings.get_string('source'),
+            value => settings.set_string('source', value.trim()),
+            {placeholder: 'https://app.todoist.com/app/project/… or today & p1'}
+        );
+
+        const languageRow = new Adw.ComboRow({
+            title: 'Filter query language',
+            subtitle: 'Language used by words inside a manually typed Todoist filter. For example, choose Español for “hoy” or English for “today”. Ignored for project and saved-filter links.',
+            model: Gtk.StringList.new(LANGUAGE_OPTIONS.map(([, label]) => label)),
+        });
+        const currentLanguage = settings.get_string('filter-language') || 'en';
+        const languageIndex = LANGUAGE_OPTIONS.findIndex(([code]) => code === currentLanguage);
+        languageRow.selected = languageIndex >= 0 ? languageIndex : 0;
+        languageRow.connect('notify::selected', row => {
+            const [code] = LANGUAGE_OPTIONS[row.selected] ?? LANGUAGE_OPTIONS[0];
+            settings.set_string('filter-language', code);
+        });
+        sourceGroup.add(languageRow);
+
+        const appearanceGroup = new Adw.PreferencesGroup({
+            title: 'Panel',
+            description: 'These settings are applied automatically.',
+        });
+        page.add(appearanceGroup);
+
+        addTextRow(
+            appearanceGroup,
+            'Menu title (optional)',
+            settings.get_string('menu-title'),
+            value => settings.set_string('menu-title', value.trim()),
+            {widthChars: 28}
+        );
+
+        const positionOptions = [
+            ['left', 'Left'],
+            ['before-clock', 'Before clock'],
+            ['after-clock', 'After clock'],
+            ['right', 'Right'],
+        ];
+        const positionRow = new Adw.ComboRow({
+            title: 'Position',
+            model: Gtk.StringList.new(positionOptions.map(([, label]) => label)),
+        });
+        let currentPosition = settings.get_string('panel-position');
+        if (currentPosition === 'center')
+            currentPosition = 'before-clock';
+        const positionIndex = positionOptions.findIndex(([value]) => value === currentPosition);
+        positionRow.selected = positionIndex >= 0 ? positionIndex : 1;
+        positionRow.connect('notify::selected', row => {
+            const [value] = positionOptions[row.selected] ?? positionOptions[1];
+            settings.set_string('panel-position', value);
+        });
+        appearanceGroup.add(positionRow);
+
+        addSwitchRow(
+            appearanceGroup,
+            'Show task count',
+            'Display the number of loaded tasks beside the icon.',
+            settings.get_boolean('show-count'),
+            value => settings.set_boolean('show-count', value)
+        );
+
+        addSpinRow(
+            appearanceGroup,
+            'Spacing',
+            'Extra space between the checklist icon and neighboring panel items.',
+            settings.get_uint('spacing-px'),
+            0,
+            32,
+            1,
+            value => settings.set_uint('spacing-px', value)
+        );
+
+        const behaviorGroup = new Adw.PreferencesGroup({title: 'Behavior'});
+        page.add(behaviorGroup);
+
+        addSwitchRow(
+            behaviorGroup,
+            'Complete task on click',
+            'When disabled, clicking a task opens it in the Todoist app, or in your browser if the app is not installed.',
+            settings.get_boolean('complete-on-click'),
+            value => settings.set_boolean('complete-on-click', value)
+        );
+
+        addSpinRow(
+            behaviorGroup,
+            'Maximum tasks in menu',
+            'Limits menu height so Refresh, Open and Settings always stay reachable.',
+            settings.get_uint('max-menu-items'),
+            5,
+            30,
+            1,
+            value => settings.set_uint('max-menu-items', value)
+        );
+
+        addSpinRow(
+            behaviorGroup,
+            'Refresh interval',
+            'Seconds between automatic updates. Minimum: 60.',
+            settings.get_uint('refresh-seconds'),
+            60,
+            3600,
+            60,
+            value => settings.set_uint('refresh-seconds', value)
+        );
+    }
+}

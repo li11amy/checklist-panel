@@ -553,3 +553,183 @@ class ChecklistIndicator extends PanelMenu.Button {
 
         if (source.kind === 'unsupported-url') {
             this._updateCount(0);
+            this._renderMessage('That link is not a Todoist project or saved filter.');
+            return;
+        }
+
+        this._busy = true;
+        const provider = this._provider();
+
+        if (source.kind === 'query') {
+            this._resolvedSource = {
+                title: 'Checklist',
+                query: source.query,
+                openUri: `todoist://search?query=${encodeURIComponent(source.query)}`,
+                webUri: 'https://app.todoist.com/app',
+            };
+            provider.fetchFilterTasks(source.query, this._settings.get_string('filter-language'), (error, tasks, hasMore) => {
+                this._finishRefresh(error, tasks, hasMore);
+            });
+            return;
+        }
+
+        if (source.kind === 'filter-id') {
+            const useResolved = this._resolvedSource?.kind === source.kind &&
+                this._resolvedSource?.id === source.id && this._resolvedSource?.query;
+            if (useResolved) {
+                provider.fetchFilterTasks(this._resolvedSource.query, this._resolvedSource.language, (error, tasks, hasMore) => {
+                    this._finishRefresh(error, tasks, hasMore);
+                });
+                return;
+            }
+
+            provider.resolveFilter(source.id, (error, resolved) => {
+                if (error) {
+                    this._finishRefresh(error);
+                    return;
+                }
+                this._resolvedSource = {
+                    kind: source.kind,
+                    id: source.id,
+                    ...resolved,
+                    webUri: source.webUri ?? todoistWebUri('filter', source.id),
+                };
+                provider.fetchFilterTasks(resolved.query, resolved.language, (tasksError, tasks, hasMore) => {
+                    this._finishRefresh(tasksError, tasks, hasMore);
+                });
+            });
+            return;
+        }
+
+        if (source.kind === 'project-id') {
+            const useResolved = this._resolvedSource?.kind === source.kind &&
+                this._resolvedSource?.id === source.id;
+            if (useResolved) {
+                provider.fetchProjectTasks(source.id, (error, tasks, hasMore) => {
+                    this._finishRefresh(error, tasks, hasMore);
+                });
+                return;
+            }
+
+            provider.resolveProject(source.id, (error, resolved) => {
+                if (error) {
+                    this._finishRefresh(error);
+                    return;
+                }
+                this._resolvedSource = {
+                    kind: source.kind,
+                    id: source.id,
+                    ...resolved,
+                    webUri: source.webUri ?? todoistWebUri('project', source.id),
+                };
+                provider.fetchProjectTasks(source.id, (tasksError, tasks, hasMore) => {
+                    this._finishRefresh(tasksError, tasks, hasMore);
+                });
+            });
+        }
+    }
+
+    _finishRefresh(error, tasks = [], hasMore = false) {
+        this._busy = false;
+        if (this._cancellable.is_cancelled())
+            return;
+
+        if (error) {
+            this._updateCount(0);
+            const message = String(error.message || error);
+            if (/HTTP 0|network|connection|timed? ?out|resolve|offline/i.test(message))
+                this._renderMessage('No connection. The tasks are probably still there.');
+            else if (/401/.test(message))
+                this._renderMessage('Todoist said no. Check the API token.');
+            else if (/403/.test(message))
+                this._renderMessage('Todoist said no. This token cannot access that source.');
+            else if (/not found/i.test(message) || /404/.test(message))
+                this._renderMessage('Nothing lives at this Todoist link anymore.');
+            else if (/400/.test(message))
+                this._renderMessage('Todoist looked at this filter and gave up. Check the query and its language.');
+            else
+                this._renderMessage('Something went sideways. Refresh and try again.');
+            console.error(`[Checklist Panel] ${error}`);
+            return;
+        }
+
+        this._renderTasks(tasks, hasMore);
+    }
+
+    destroy() {
+        if (this._refreshSource) {
+            GLib.Source.remove(this._refreshSource);
+            this._refreshSource = 0;
+        }
+
+        this._cancellable.cancel();
+        this._session.abort();
+        this._resolvedSource = null;
+        super.destroy();
+    }
+});
+
+export default class ChecklistPanelExtension extends Extension {
+    enable() {
+        this._settings = this.getSettings();
+        this._secretSchema = createSecretSchema();
+        this._settingsChangedId = this._settings.connect('changed', () => this._queueRebuild());
+        this._rebuildSource = 0;
+        this._rebuild();
+    }
+
+    _queueRebuild() {
+        if (this._rebuildSource)
+            return;
+
+        this._rebuildSource = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 700, () => {
+            this._rebuildSource = 0;
+            this._rebuild();
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
+    _lookupToken() {
+        try {
+            return Secret.password_lookup_sync(
+                this._secretSchema,
+                SECRET_ATTRIBUTES,
+                null
+            ) ?? '';
+        } catch (error) {
+            console.error(`[Checklist Panel] Could not read API token from Secret Service: ${error}`);
+            return '';
+        }
+    }
+
+    _rebuild() {
+        this._indicator?.destroy();
+        this._indicator = null;
+
+        const position = this._settings.get_string('panel-position');
+        const box = position === 'left' ? 'left' : position === 'right' ? 'right' : 'center';
+        const index = position === 'after-clock' ? 1 : 0;
+        const token = this._lookupToken();
+
+        this._indicator = new ChecklistIndicator(this, this._settings, token);
+        Main.panel.addToStatusArea(this.uuid, this._indicator, index, box);
+    }
+
+    disable() {
+        // GNOME remembers extension code surprisingly well. Clean up everything we create.
+        if (this._rebuildSource) {
+            GLib.Source.remove(this._rebuildSource);
+            this._rebuildSource = 0;
+        }
+
+        if (this._settings && this._settingsChangedId) {
+            this._settings.disconnect(this._settingsChangedId);
+            this._settingsChangedId = 0;
+        }
+
+        this._indicator?.destroy();
+        this._indicator = null;
+        this._secretSchema = null;
+        this._settings = null;
+    }
+}

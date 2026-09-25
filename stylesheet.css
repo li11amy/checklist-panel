@@ -1,0 +1,15 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Copyright (C) 2026 li11amy */
+
+.checklist-panel-title {
+  font-weight: bold;
+}
+
+.checklist-panel-count {
+  margin-left: 4px;
+}
+
+.checklist-panel-easter-egg {
+  font-size: 0.9em;
+  opacity: 0.65;
+}

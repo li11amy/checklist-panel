@@ -1,0 +1,11 @@
+{
+  "uuid": "checklist-panel@li11amy.github.io",
+  "name": "Checklist Panel",
+  "description": "Unofficial Todoist integration for GNOME Shell. Shows one Todoist project, saved filter, or filter query as a compact checklist in the top panel. This extension is for Todoist sources only; it does not render arbitrary checklist links.\n\nFor people who lose every list. Here's another one.",
+  "shell-version": [
+    "50"
+  ],
+  "settings-schema": "org.gnome.shell.extensions.checklist-panel",
+  "url": "https://github.com/li11amy/checklist-panel",
+  "version-name": "1.0"
+}
